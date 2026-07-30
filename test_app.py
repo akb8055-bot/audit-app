@@ -155,6 +155,19 @@ class AppTests(unittest.TestCase):
         self.assertGreater(len(pdf_bytes), 0)
         self.assertTrue(output_path.endswith(".pdf"))
 
+    def test_report_headline_uses_submitted_score(self):
+        audit_data = {
+            "outlet": "Pastry and Bakery",
+            "results": {
+                "item_1": "Achieved",
+                "item_2": "Partial",
+                "item_3": "Did Not Achieve",
+            },
+        }
+        headline = app.build_report_headline(audit_data)
+        self.assertIn("Pastry and Bakery", headline)
+        self.assertIn("50.0%", headline)
+
     def test_generate_monthly_pdf_bytes_returns_bytes(self):
         history = [
             {

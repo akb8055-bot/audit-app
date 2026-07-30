@@ -442,6 +442,13 @@ def get_status(score: float) -> str:
     return "Needs Improvement"
 
 
+def build_report_headline(audit_data: Dict[str, object]) -> str:
+    score, _counts = calculate_score(audit_data.get("results", {}))
+    outlet = str(audit_data.get("outlet", "Outlet")).strip() or "Outlet"
+    status = get_status(score)
+    return f"{outlet} • Score {score:.1f}% • {status}"
+
+
 def parse_item_comments(raw_text: str) -> Dict[str, str]:
     comments: Dict[str, str] = {}
     for line in raw_text.splitlines():
@@ -885,11 +892,12 @@ def build_outlet_bar_chart(outlet_scores: Dict[str, float]):
 
     labels = [name for name, _ in ranked]
     values = [score for _, score in ranked]
-    colors_list = ["#8ecae6" if index % 2 == 0 else "#a8dadc" for index in range(len(labels))]
+    palette = ["#2563EB", "#0EA5E9", "#14B8A6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#64748B", "#0F766E"]
+    colors_list = [palette[index % len(palette)] for index in range(len(labels))]
 
     plt.style.use("seaborn-v0_8-whitegrid")
     fig, ax = plt.subplots(figsize=(10.5, 4.2), dpi=160)
-    bars = ax.bar(labels, values, color=colors_list, edgecolor="#9db2c7", linewidth=0.9, width=0.6)
+    bars = ax.bar(labels, values, color=colors_list, edgecolor="#334155", linewidth=0.6, width=0.38)
     ax.set_ylim(0, 105)
     ax.set_ylabel("Average Score (%)", fontsize=8, color="#1E293B")
     ax.set_title("Outlet Ranking by Average Compliance", fontsize=10, color="#0F294A", pad=8)
@@ -920,13 +928,15 @@ def build_outlet_trend_chart(outlet_trends: Dict[str, List[Dict[str, object]]]):
     if not visible_trends:
         return None
 
+    palette = ["#2563EB", "#0EA5E9", "#14B8A6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#64748B", "#0F766E"]
     plt.style.use("seaborn-v0_8-whitegrid")
     fig, ax = plt.subplots(figsize=(8.0, 4.2), dpi=160)
-    for outlet, points in visible_trends.items():
+    for index, (outlet, points) in enumerate(visible_trends.items()):
         x_values = [datetime.strptime(point["date"], "%Y-%m-%d") for point in points]
         y_values = [float(point["score"]) for point in points]
-        ax.plot(x_values, y_values, marker="o", linewidth=2.6, label=outlet, color="#0F294A" if outlet == list(visible_trends.keys())[0] else "#008080", markerfacecolor="#ffffff", markeredgewidth=1.1, markersize=4.8)
-        ax.fill_between(x_values, y_values, alpha=0.12, color="#008080")
+        color = palette[index % len(palette)]
+        ax.plot(x_values, y_values, marker="o", linewidth=2.0, label=outlet, color=color, markerfacecolor="#ffffff", markeredgewidth=1.0, markersize=3.8)
+        ax.fill_between(x_values, y_values, alpha=0.10, color=color)
 
     ax.set_ylim(0, 105)
     ax.set_ylabel("Inspection Score (%)", fontsize=8, color="#1E293B")
@@ -1046,8 +1056,9 @@ def generate_pdf_report(audit_data: Dict[str, object], output_path: Optional[str
         canvas.drawRightString(letter[0] - 0.75 * inch, 0.5 * inch, f"Page {canvas.getPageNumber()}")
 
     story = []
+    headline = build_report_headline(audit_data)
     story.append(Paragraph("Food Safety Inspection Report", styles["DocTitle"]))
-    story.append(Paragraph("Professional inspection report with clear executive score summary.", styles["Subtitle"]))
+    story.append(Paragraph(headline, styles["Subtitle"]))
     story.append(Spacer(1, 0.12 * inch))
 
     metadata_rows = [
@@ -1197,8 +1208,11 @@ def export_monthly_pdf(history: List[Dict], selected_month: str, output_path: Op
     styles.add(ParagraphStyle(name="SummaryValue", fontName="Helvetica-Bold", fontSize=16, leading=18, textColor=colors.HexColor("#0F294A")))
 
     story = []
+    latest_entry = history[-1] if history else {}
+    latest_score = float(latest_entry.get("score", summary.get("average_score", 0.0))) if latest_entry else float(summary.get("average_score", 0.0))
+    latest_status = get_status(latest_score)
     story.append(Paragraph("Monthly Analytics Report", styles["DocTitle"]))
-    story.append(Paragraph("Executive performance overview with charts, trend insight, and outlet-level breakdown.", styles["Subtitle"]))
+    story.append(Paragraph(f"Latest inspection: {latest_entry.get('outlet', 'N/A')} • {latest_score:.1f}% • {latest_status}", styles["Subtitle"]))
     story.append(Spacer(1, 0.12 * inch))
 
     metric_rows = [
