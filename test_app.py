@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -56,6 +57,55 @@ class AppTests(unittest.TestCase):
         self.assertEqual(counts["Achieved"], 1)
         self.assertEqual(counts["Partial"], 1)
         self.assertEqual(counts["Did Not Achieve"], 1)
+
+    def test_load_history_uses_remote_storage_when_configured(self):
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+        with mock.patch.dict(os.environ, {"REPORT_STORAGE_BACKEND": "remote", "REPORT_STORAGE_URL": "https://example.com/history.json"}, clear=False):
+            with mock.patch.object(app.urllib.request, "urlopen", return_value=FakeResponse([{"outlet": "Lobby Lounge"}])) as mock_urlopen:
+                history = app.load_history()
+
+        self.assertEqual(history, [{"outlet": "Lobby Lounge"}])
+        self.assertTrue(mock_urlopen.called)
+
+    def test_save_history_uses_remote_storage_when_configured(self):
+        class FakeResponse:
+            def __init__(self):
+                self.request = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(request, *args, **kwargs):
+            response = FakeResponse()
+            response.request = request
+            return response
+
+        with mock.patch.dict(os.environ, {"REPORT_STORAGE_BACKEND": "remote", "REPORT_STORAGE_URL": "https://example.com/history.json"}, clear=False):
+            with mock.patch.object(app.urllib.request, "urlopen", side_effect=fake_urlopen) as mock_urlopen:
+                app.save_history([{"outlet": "Lobby Lounge"}])
+
+        self.assertTrue(mock_urlopen.called)
+        request = mock_urlopen.call_args[0][0]
+        self.assertEqual(request.get_method(), "PUT")
+        self.assertIn(b"Lobby Lounge", request.data)
 
     def test_export_monthly_pdf_creates_file(self):
         history = [

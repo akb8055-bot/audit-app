@@ -4,6 +4,7 @@ import math
 import os
 import re
 import smtplib
+import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime
 from email.message import EmailMessage
@@ -466,7 +467,22 @@ def get_history_storage_path() -> Path:
 
 
 def load_history(path: Optional[str] = None) -> List[Dict]:
-    history_path = Path(path) if path else get_history_storage_path()
+    if path:
+        history_path = Path(path)
+        if not history_path.exists():
+            return []
+        with open(history_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    backend = os.getenv("REPORT_STORAGE_BACKEND", "local").lower()
+    remote_url = os.getenv("REPORT_STORAGE_URL")
+    if backend == "remote" and remote_url:
+        request = urllib.request.Request(remote_url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload) if payload else []
+
+    history_path = get_history_storage_path()
     if not history_path.exists():
         return []
     with open(history_path, "r", encoding="utf-8") as handle:
@@ -474,7 +490,22 @@ def load_history(path: Optional[str] = None) -> List[Dict]:
 
 
 def save_history(history: List[Dict], path: Optional[str] = None) -> None:
-    history_path = Path(path) if path else get_history_storage_path()
+    if path:
+        history_path = Path(path)
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(history_path, "w", encoding="utf-8") as handle:
+            json.dump(history, handle, indent=2)
+        return
+
+    backend = os.getenv("REPORT_STORAGE_BACKEND", "local").lower()
+    remote_url = os.getenv("REPORT_STORAGE_URL")
+    if backend == "remote" and remote_url:
+        payload = json.dumps(history, indent=2).encode("utf-8")
+        request = urllib.request.Request(remote_url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
+        with urllib.request.urlopen(request, timeout=10) as _response:
+            return
+
+    history_path = get_history_storage_path()
     history_path.parent.mkdir(parents=True, exist_ok=True)
     with open(history_path, "w", encoding="utf-8") as handle:
         json.dump(history, handle, indent=2)
