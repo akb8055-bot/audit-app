@@ -11,6 +11,11 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+try:
+    from PIL import Image as PILImage
+except ImportError:  # pragma: no cover
+    PILImage = None
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -449,6 +454,42 @@ def build_report_headline(audit_data: Dict[str, object]) -> str:
     return f"{outlet} • Score {score:.1f}% • {status}"
 
 
+def build_submission_signature(audit_data: Dict[str, object]) -> str:
+    outlet = str(audit_data.get("outlet", "")).strip().lower()
+    timestamp = str(audit_data.get("inspection_timestamp", "")).strip()
+    hotel = str(audit_data.get("hotel_name", "")).strip().lower()
+    auditor = str(audit_data.get("auditor_name", "")).strip().lower()
+    return f"{hotel}|{outlet}|{timestamp}|{auditor}"
+
+
+def append_submission_to_history(history: List[Dict], audit_data: Dict[str, object]) -> List[Dict]:
+    signature = build_submission_signature(audit_data)
+    for entry in history:
+        if build_submission_signature(entry) == signature:
+            return history
+
+    score, counts = calculate_score(audit_data.get("results", {}))
+    history.append(
+        {
+            "hotel_name": audit_data.get("hotel_name", ""),
+            "outlet": audit_data.get("outlet", ""),
+            "inspection_date": datetime.now().strftime("%Y-%m-%d"),
+            "inspection_timestamp": audit_data.get("inspection_timestamp", datetime.now().strftime("%Y-%m-%d")),
+            "person_on_duty": audit_data.get("person_on_duty", ""),
+            "department": audit_data.get("department", ""),
+            "auditor_name": audit_data.get("auditor_name", ""),
+            "score": score,
+            "counts": counts,
+            "results": audit_data.get("results", {}),
+            "observations": audit_data.get("observations", ""),
+            "corrective_actions": audit_data.get("corrective_actions", ""),
+            "notes_guidance": audit_data.get("notes_guidance", ""),
+            "evidence_paths": audit_data.get("evidence_paths", []) or [],
+        }
+    )
+    return history
+
+
 def parse_item_comments(raw_text: str) -> Dict[str, str]:
     comments: Dict[str, str] = {}
     for line in raw_text.splitlines():
@@ -471,6 +512,42 @@ def get_history_storage_path() -> Path:
         storage_path = Path(__file__).resolve().parent / "data"
     storage_path.mkdir(parents=True, exist_ok=True)
     return storage_path / "audit_history.json"
+
+
+def get_evidence_storage_dir() -> Path:
+    configured_dir = os.getenv("REPORT_DATA_DIR", "").strip()
+    if configured_dir:
+        storage_path = Path(configured_dir)
+        if any(marker in str(storage_path) for marker in ["/tmp", "/var/folders/", "\\\temp\\"]):
+            storage_path = Path(__file__).resolve().parent / "data"
+    else:
+        storage_path = Path(__file__).resolve().parent / "data"
+    storage_path.mkdir(parents=True, exist_ok=True)
+    evidence_dir = storage_path / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    return evidence_dir
+
+
+def save_uploaded_evidence_files(uploaded_files: List[object], audit_data: Dict[str, object]) -> List[str]:
+    saved_paths: List[str] = []
+    if not uploaded_files:
+        return saved_paths
+
+    outlet_name = str(audit_data.get("outlet", "outlet")).strip().lower().replace(" ", "-") or "outlet"
+    timestamp = str(audit_data.get("inspection_timestamp", datetime.now().strftime("%Y-%m-%d"))).strip()
+    safe_timestamp = re.sub(r"[^a-zA-Z0-9]+", "-", timestamp).strip("-") or "inspection"
+    evidence_dir = get_evidence_storage_dir()
+    for index, uploaded_file in enumerate(uploaded_files, start=1):
+        if not getattr(uploaded_file, "name", None):
+            continue
+        file_name = Path(uploaded_file.name).name
+        suffix = Path(file_name).suffix or ".jpg"
+        safe_name = f"{outlet_name}-{safe_timestamp}-{index}{suffix}"
+        destination = evidence_dir / safe_name
+        with destination.open("wb") as handle:
+            handle.write(uploaded_file.getvalue())
+        saved_paths.append(str(destination))
+    return saved_paths
 
 
 def load_history(path: Optional[str] = None) -> List[Dict]:
@@ -725,9 +802,19 @@ def collect_audit_data() -> Dict[str, object]:
             corrective_actions = st.text_area("Corrective Actions Taken", height=120)
             notes_guidance = st.text_area("Notes & Guidance", height=120)
             inspector_comments_text = st.text_area("Inspector Comments (optional; format: item_1: comment)", height=120)
+            uploaded_evidence = st.file_uploader(
+                "Upload evidence photos (optional)",
+                accept_multiple_files=True,
+                type=["jpg", "jpeg", "png", "webp"],
+            )
 
         submitted = st.form_submit_button("Generate Daily Report PDF")
         if submitted:
+            evidence_paths = save_uploaded_evidence_files(uploaded_evidence or [], {
+                "hotel_name": hotel_name,
+                "outlet": outlet,
+                "inspection_timestamp": inspection_timestamp,
+            })
             st.session_state["last_form_submitted"] = True
             st.session_state["last_submission_data"] = {
                 "hotel_name": hotel_name,
@@ -741,6 +828,7 @@ def collect_audit_data() -> Dict[str, object]:
                 "corrective_actions": corrective_actions,
                 "notes_guidance": notes_guidance,
                 "item_comments": parse_item_comments(inspector_comments_text),
+                "evidence_paths": evidence_paths,
             }
 
     return {
@@ -755,6 +843,7 @@ def collect_audit_data() -> Dict[str, object]:
         "corrective_actions": corrective_actions,
         "notes_guidance": notes_guidance,
         "item_comments": parse_item_comments(inspector_comments_text),
+        "evidence_paths": [],
     }
 
 
@@ -959,10 +1048,30 @@ def build_outlet_trend_chart(outlet_trends: Dict[str, List[Dict[str, object]]]):
     return buffer.getvalue()
 
 
+def append_evidence_images_to_story(story: List[object], evidence_paths: List[str], styles: object) -> None:
+    if not evidence_paths:
+        return
+    story.append(Spacer(1, 0.08 * inch))
+    story.append(Paragraph("Evidence Photos", styles["SectionTitle"]))
+    for evidence_path in evidence_paths:
+        image_path = Path(evidence_path)
+        if not image_path.exists():
+            continue
+        try:
+            if PILImage is not None:
+                with PILImage.open(image_path) as img:
+                    img.verify()
+            story.append(Spacer(1, 0.04 * inch))
+            story.append(Image(str(image_path), width=5.4 * inch, height=3.4 * inch))
+        except Exception:
+            story.append(Paragraph(f"Unable to render image: {image_path.name}", styles["SectionBody"]))
+
+
 def generate_pdf_report(audit_data: Dict[str, object], output_path: Optional[str] = None) -> str:
     score, counts = calculate_score(audit_data["results"])
     status = get_status(score)
     output_path = output_path or build_dynamic_output_path(audit_data)
+    evidence_paths = audit_data.get("evidence_paths", []) or []
 
     doc = SimpleDocTemplate(
         output_path,
@@ -1169,6 +1278,8 @@ def generate_pdf_report(audit_data: Dict[str, object], output_path: Optional[str
     story.append(Spacer(1, 0.08 * inch))
     story.append(build_box("Notes & Guidance", str(audit_data.get("notes_guidance", "") or "N/A")))
 
+    append_evidence_images_to_story(story, evidence_paths, styles)
+
     doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return output_path
 
@@ -1322,6 +1433,18 @@ def export_monthly_pdf(history: List[Dict], selected_month: str, output_path: Op
     story.append(outlet_table)
     story.append(Spacer(1, 0.14 * inch))
 
+    evidence_entries = []
+    for entry in history:
+        evidence_paths = entry.get("evidence_paths", []) or []
+        if evidence_paths:
+            evidence_entries.append((entry.get("outlet", "N/A"), evidence_paths))
+    if evidence_entries:
+        story.append(Paragraph("Evidence Photos Attached", styles["SectionTitle"]))
+        for outlet, paths in evidence_entries:
+            story.append(Paragraph(f"{outlet}: {', '.join(Path(path).name for path in paths)}", styles["SectionBody"]))
+            append_evidence_images_to_story(story, paths, styles)
+        story.append(Spacer(1, 0.08 * inch))
+
     story.append(Paragraph("Outlet Recurring Issues", styles["SectionTitle"]))
     issue_rows = [["Outlet", "Recurring Issues"]]
     for outlet, issues in summary.get("outlet_recurring_issues", {}).items():
@@ -1364,25 +1487,11 @@ def main() -> None:
     audit_data = collect_audit_data()
     if st.session_state.get("last_form_submitted", False):
         submitted_data = st.session_state.get("last_submission_data") or audit_data
-        score, counts = calculate_score(submitted_data["results"])
         history = load_history()
-        history.append(
-            {
-                "hotel_name": submitted_data["hotel_name"],
-                "outlet": submitted_data["outlet"],
-                "inspection_date": datetime.now().strftime("%Y-%m-%d"),
-                "inspection_timestamp": submitted_data["inspection_timestamp"],
-                "person_on_duty": submitted_data["person_on_duty"],
-                "department": submitted_data["department"],
-                "auditor_name": submitted_data["auditor_name"],
-                "score": score,
-                "counts": counts,
-                "results": submitted_data["results"],
-                "observations": submitted_data["observations"],
-                "corrective_actions": submitted_data["corrective_actions"],
-                "notes_guidance": submitted_data["notes_guidance"],
-            }
-        )
+        evidence_paths = save_uploaded_evidence_files(uploaded_evidence or [], submitted_data)
+        submitted_data = dict(submitted_data)
+        submitted_data["evidence_paths"] = evidence_paths
+        history = append_submission_to_history(history, submitted_data)
         save_history(history)
         pdf_bytes, output_path = generate_daily_pdf_bytes(submitted_data)
         st.session_state["last_generated_output_path"] = output_path

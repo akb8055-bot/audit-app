@@ -168,6 +168,40 @@ class AppTests(unittest.TestCase):
         self.assertIn("Pastry and Bakery", headline)
         self.assertIn("50.0%", headline)
 
+    def test_repeated_submission_signature_does_not_duplicate_history(self):
+        audit_data = {
+            "hotel_name": "Conrad Abu Dhabi Etihad Towers",
+            "outlet": "Nahaam",
+            "inspection_timestamp": "2026-07-30",
+            "person_on_duty": "Jane",
+            "department": "Food & Beverage",
+            "auditor_name": "Alex",
+            "results": {"item_1": "Achieved"},
+            "observations": "Good",
+            "corrective_actions": "None",
+            "notes_guidance": "Keep monitoring",
+        }
+        history = []
+        history = app.append_submission_to_history(history, audit_data)
+        history = app.append_submission_to_history(history, audit_data)
+        self.assertEqual(len(history), 1)
+
+    def test_save_uploaded_evidence_files_writes_files(self):
+        class FakeUploadedFile:
+            def __init__(self, name, payload):
+                self.name = name
+                self._payload = payload
+
+            def getvalue(self):
+                return self._payload
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"REPORT_DATA_DIR": temp_dir}, clear=False):
+                saved_paths = app.save_uploaded_evidence_files([FakeUploadedFile("evidence.png", b"fake-image")], {"outlet": "Nahaam"})
+
+        self.assertEqual(len(saved_paths), 1)
+        self.assertTrue(os.path.exists(saved_paths[0]))
+
     def test_generate_monthly_pdf_bytes_returns_bytes(self):
         history = [
             {
