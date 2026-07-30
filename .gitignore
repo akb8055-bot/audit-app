@@ -7,3 +7,5 @@ __pycache__/
 .mypy_cache/
 .DS_Store
 .ipynb_checkpoints/
+.streamlit/credentials.toml
+.streamlit/machine_id_v4
