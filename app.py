@@ -616,6 +616,18 @@ def build_records_synopsis(history: List[Dict]) -> List[Dict[str, object]]:
     return records
 
 
+def filter_records_for_view(history: List[Dict], outlet_filter: str = "", date_filter: str = "") -> List[Dict]:
+    filtered = []
+    for entry in history:
+        outlet_value = str(entry.get("outlet", "")).strip()
+        date_value = str(entry.get("inspection_timestamp") or entry.get("inspection_date") or "").strip()
+        outlet_matches = not outlet_filter or outlet_value.lower() == outlet_filter.lower()
+        date_matches = not date_filter or date_value.startswith(date_filter)
+        if outlet_matches and date_matches:
+            filtered.append(entry)
+    return filtered
+
+
 def render_records_workspace(history: List[Dict]) -> None:
     st.markdown(
         """
@@ -627,9 +639,19 @@ def render_records_workspace(history: List[Dict]) -> None:
         unsafe_allow_html=True,
     )
 
-    records = build_records_synopsis(history)
+    available_outlets = sorted({entry.get("outlet", "") for entry in history if entry.get("outlet")})
+    available_dates = sorted({str(entry.get("inspection_timestamp") or entry.get("inspection_date") or "").split(" ")[0] for entry in history if entry.get("inspection_timestamp") or entry.get("inspection_date")})
+
+    filter_col_a, filter_col_b = st.columns(2)
+    with filter_col_a:
+        outlet_filter = st.selectbox("Filter by outlet", ["All"] + available_outlets, key="records_outlet_filter")
+    with filter_col_b:
+        date_filter = st.selectbox("Filter by inspection date", ["All"] + available_dates, key="records_date_filter")
+
+    filtered_history = filter_records_for_view(history, outlet_filter=outlet_filter if outlet_filter != "All" else "", date_filter=date_filter if date_filter != "All" else "")
+    records = build_records_synopsis(filtered_history)
     if not records:
-        st.info("No inspection records yet. Submit a daily report to build this workspace.")
+        st.info("No inspection records match the selected filters.")
         return
 
     summary_cols = st.columns(3)

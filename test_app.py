@@ -186,6 +186,25 @@ class AppTests(unittest.TestCase):
         history = app.append_submission_to_history(history, audit_data)
         self.assertEqual(len(history), 1)
 
+    def test_filter_records_for_view_supports_outlet_and_date(self):
+        history = [
+            {
+                "outlet": "Lobby Lounge",
+                "inspection_timestamp": "2026-07-10 09:00",
+                "score": 92.0,
+            },
+            {
+                "outlet": "Pool Bar",
+                "inspection_timestamp": "2026-07-12 11:15",
+                "score": 76.0,
+            },
+        ]
+
+        filtered = app.filter_records_for_view(history, outlet_filter="Lobby Lounge", date_filter="2026-07-10")
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["outlet"], "Lobby Lounge")
+
     def test_save_uploaded_evidence_files_writes_files(self):
         class FakeUploadedFile:
             def __init__(self, name, payload):
